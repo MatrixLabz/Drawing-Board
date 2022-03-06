@@ -48,6 +48,10 @@ import java.util.*
 import kotlin.collections.ArrayList
 import android.content.ContentResolver
 import androidx.annotation.NonNull
+import com.google.android.gms.ads.*
+import com.google.android.gms.ads.rewarded.RewardItem
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 
 
 class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, OnUndoRedoPaths,
@@ -68,13 +72,51 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
         Manifest.permission.READ_EXTERNAL_STORAGE
     )
     val MULTIPLE_PERMISSIONS = 10
+    private var mRewardedAd: RewardedAd? = null
 
+    private val TAG = "MainActivity"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = DataBindingUtil.setContentView(this, R.layout.activity_main)
 
 //        setContentView(viewBinding.root)
         initializations()
+        MobileAds.initialize(this)
+
+
+        var adRequest = AdRequest.Builder().build()
+
+        RewardedAd.load(this, resources.getString(R.string.rewarded_ad), adRequest, object : RewardedAdLoadCallback() {
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                Log.d(TAG, adError.message)
+                mRewardedAd = null
+            }
+
+            override fun onAdLoaded(rewardedAd: RewardedAd) {
+                Log.d(TAG, "Ad was loaded.")
+                mRewardedAd = rewardedAd
+            }
+        })
+
+        mRewardedAd?.fullScreenContentCallback = object: FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                // Called when ad is shown.
+                Log.d(TAG, "Ad was shown.")
+            }
+
+            override fun onAdFailedToShowFullScreenContent(adError: AdError?) {
+                // Called when ad fails to show.
+                Log.d(TAG, "Ad failed to show.")
+            }
+
+            override fun onAdDismissedFullScreenContent() {
+                // Called when ad is dismissed.
+                // Set the ad reference to null so you don't show the ad a second time.
+                Log.d(TAG, "Ad was dismissed.")
+                mRewardedAd = null
+            }
+        }
+
 
         if (checkPermissions()) {
             //  permissions  granted.
@@ -301,6 +343,11 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
 //            val filePath = saveImage(canvasBitmap, "DrawingBoard-$currentDate")
 //            addStringPreference(this, AppConstant.PREFERENCE_FILE_PATH, filePath.toString())
             showMessage(this@MainActivity, getString(R.string.drawing_save))
+            if (mRewardedAd != null) {
+                mRewardedAd?.show(this) {}
+            } else {
+                Log.d(TAG, "The rewarded ad wasn't ready yet.")
+            }
         }
     }
 
