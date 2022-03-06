@@ -83,7 +83,6 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
         initializations()
         MobileAds.initialize(this)
 
-
         var adRequest = AdRequest.Builder().build()
 
         RewardedAd.load(this, resources.getString(R.string.rewarded_ad), adRequest, object : RewardedAdLoadCallback() {
