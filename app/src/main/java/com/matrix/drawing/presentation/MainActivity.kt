@@ -1,6 +1,9 @@
 package com.matrix.drawing.presentation
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ContentValues
+import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -12,6 +15,7 @@ import android.os.Build
 import android.os.Build.VERSION.SDK_INT
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.util.Log
@@ -39,9 +43,19 @@ import com.matrix.drawing.domain.utils.AppSharedPreference.getIntegerPreference
 import com.matrix.drawing.domain.utils.AppSharedPreference.getStringPreference
 import com.matrix.drawing.domain.utils.AppToastMessage.showMessage
 import java.io.*
+import java.text.SimpleDateFormat
+import java.util.*
+import kotlin.collections.ArrayList
+import android.content.ContentResolver
+import androidx.annotation.NonNull
+import com.google.android.gms.ads.*
+import com.google.android.gms.ads.rewarded.RewardItem
+import com.google.android.gms.ads.rewarded.RewardedAd
+import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
 
 
-class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, OnUndoRedoPaths, OnSetZoomLevel {
+class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, OnUndoRedoPaths,
+    OnSetZoomLevel {
 
     private lateinit var viewBinding: ActivityMainBinding
     private var drawingPad: DrawingPad? = null
@@ -49,18 +63,60 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
     private var selectedStrokeWidth = 0
     private var isEraserModeActive = false
 
+    private var relativeLocation: String =
+        Environment.DIRECTORY_DCIM + File.separator + "DrawingBoard";
+
+
     private val permissions = arrayOf<String>(
         Manifest.permission.WRITE_EXTERNAL_STORAGE,
         Manifest.permission.READ_EXTERNAL_STORAGE
     )
     val MULTIPLE_PERMISSIONS = 10
+    private var mRewardedAd: RewardedAd? = null
 
+    private val TAG = "MainActivity"
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         viewBinding = DataBindingUtil.setContentView(this, R.layout.activity_main)
 
 //        setContentView(viewBinding.root)
         initializations()
+        MobileAds.initialize(this)
+
+
+        var adRequest = AdRequest.Builder().build()
+
+        RewardedAd.load(this, resources.getString(R.string.rewarded_ad), adRequest, object : RewardedAdLoadCallback() {
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                Log.d(TAG, adError.message)
+                mRewardedAd = null
+            }
+
+            override fun onAdLoaded(rewardedAd: RewardedAd) {
+                Log.d(TAG, "Ad was loaded.")
+                mRewardedAd = rewardedAd
+            }
+        })
+
+        mRewardedAd?.fullScreenContentCallback = object: FullScreenContentCallback() {
+            override fun onAdShowedFullScreenContent() {
+                // Called when ad is shown.
+                Log.d(TAG, "Ad was shown.")
+            }
+
+            override fun onAdFailedToShowFullScreenContent(adError: AdError?) {
+                // Called when ad fails to show.
+                Log.d(TAG, "Ad failed to show.")
+            }
+
+            override fun onAdDismissedFullScreenContent() {
+                // Called when ad is dismissed.
+                // Set the ad reference to null so you don't show the ad a second time.
+                Log.d(TAG, "Ad was dismissed.")
+                mRewardedAd = null
+            }
+        }
+
 
         if (checkPermissions()) {
             //  permissions  granted.
@@ -84,14 +140,15 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
         drawingPad = viewBinding.drawingPad
         val metrics = DisplayMetrics()
         windowManager.defaultDisplay.getMetrics(metrics)
-        var oldBitmap: Bitmap? = null
-        val filePath = getStringPreference(this, AppConstant.PREFERENCE_FILE_PATH, "")
-        if (!filePath!!.isEmpty()) {
-            oldBitmap = loadImageFromStorage(filePath)
-            Log.d("check_file", "" + filePath)
-            addIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE, AppConstant.DRAWING_TYPE_ZOOMING)
-            updateDrawingType(AppConstant.DRAWING_TYPE_ZOOMING)
-        }
+
+        val oldBitmap: Bitmap? = null
+//        val filePath = getStringPreference(this, AppConstant.PREFERENCE_FILE_PATH, "")
+//        if (filePath!!.isNotEmpty()) {
+//            oldBitmap = loadImageFromStorage(filePath)
+//            Log.d("check_file", "" + filePath)
+//            addIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE, AppConstant.DRAWING_TYPE_ZOOMING)
+//            updateDrawingType(AppConstant.DRAWING_TYPE_ZOOMING)
+//        }
         drawingPad!!.initialize(metrics, oldBitmap, viewBinding.drawingPad, this)
     }
 
@@ -110,7 +167,10 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
                             if (drawingPad!!.drawingCount > 0) {
                                 updateDrawingType(drawing)
                             } else {
-                                showMessage(this@MainActivity, getString(R.string.no_path_drawn_yet))
+                                showMessage(
+                                    this@MainActivity,
+                                    getString(R.string.no_path_drawn_yet)
+                                )
                             }
                         } else {
                             updateDrawingType(drawing)
@@ -120,11 +180,19 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
             }
             R.id.tv_paint_color -> {
                 val defaultColor =
-                    getIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_PAINT_COLOR, AppConstant.colorBlack)
+                    getIntegerPreference(
+                        this,
+                        AppConstant.PREFERENCE_SELECTED_PAINT_COLOR,
+                        AppConstant.colorBlack
+                    )
                 show(this, defaultColor, object : OnSelectColor {
                     override fun selectColor(color: Int) {
                         drawingPad!!.setPaintColor(color)
-                        addIntegerPreference(this@MainActivity, AppConstant.PREFERENCE_SELECTED_PAINT_COLOR, color)
+                        addIntegerPreference(
+                            this@MainActivity,
+                            AppConstant.PREFERENCE_SELECTED_PAINT_COLOR,
+                            color
+                        )
                         changeSelectionColor(color)
                         selectedColor = color
                     }
@@ -133,11 +201,19 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
             }
             R.id.iv_paint_width -> {
                 val defaultStrokeWidth =
-                    getIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_PAINT_STROKE, AppConstant.STROKE_WIDTH_3)
+                    getIntegerPreference(
+                        this,
+                        AppConstant.PREFERENCE_SELECTED_PAINT_STROKE,
+                        AppConstant.STROKE_WIDTH_3
+                    )
                 show(this, defaultStrokeWidth, object : OnSelectStroke {
                     override fun selectStroke(width: Int) {
                         drawingPad!!.setPaintStroke(width)
-                        addIntegerPreference(this@MainActivity, AppConstant.PREFERENCE_SELECTED_PAINT_STROKE, width)
+                        addIntegerPreference(
+                            this@MainActivity,
+                            AppConstant.PREFERENCE_SELECTED_PAINT_STROKE,
+                            width
+                        )
                         selectedStrokeWidth = width
                     }
                 })
@@ -165,15 +241,23 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
                 }
                 saveDrawing(drawingPad!!.canvasBitmap)
             }
-            R.id.iv_delete -> showAlertMessageWithTwoButtons(this, object : OnClickAlertDialogTwoButtons {
-                override fun clickPositiveDialogButton(dialog_name: String?) {
-                    addStringPreference(this@MainActivity, AppConstant.PREFERENCE_FILE_PATH, "")
-                    drawingPad!!.deleteDrawing()
-                    updateDrawingType(AppConstant.DRAWING_TYPE_PENCIL)
-                }
+            R.id.iv_delete -> showAlertMessageWithTwoButtons(
+                this,
+                object : OnClickAlertDialogTwoButtons {
+                    override fun clickPositiveDialogButton(dialog_name: String?) {
+                        addStringPreference(this@MainActivity, AppConstant.PREFERENCE_FILE_PATH, "")
+                        drawingPad!!.deleteDrawing()
+                        updateDrawingType(AppConstant.DRAWING_TYPE_PENCIL)
+                    }
 
-                override fun clickNegativeDialogButton(dialog_name: String?) {}
-            }, "", "", "Are you sure to delete?", getString(R.string.yes), getString(R.string.no))
+                    override fun clickNegativeDialogButton(dialog_name: String?) {}
+                },
+                "",
+                "",
+                "Are you sure to delete?",
+                getString(R.string.yes),
+                getString(R.string.no)
+            )
         }
     }
 
@@ -235,9 +319,17 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
         //Setting the default values for paint color and stroke width
         selectedColor = AppConstant.colorBlack
         selectedStrokeWidth = AppConstant.STROKE_WIDTH_1
-        addIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE, AppConstant.DRAWING_TYPE_PENCIL)
+        addIntegerPreference(
+            this,
+            AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE,
+            AppConstant.DRAWING_TYPE_PENCIL
+        )
         addIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_PAINT_COLOR, selectedColor)
-        addIntegerPreference(this, AppConstant.PREFERENCE_SELECTED_PAINT_STROKE, selectedStrokeWidth)
+        addIntegerPreference(
+            this,
+            AppConstant.PREFERENCE_SELECTED_PAINT_STROKE,
+            selectedStrokeWidth
+        )
 
         //setting default zoom level
         setZoomLevel(1.5f)
@@ -245,9 +337,17 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
 
     private fun saveDrawing(canvasBitmap: Bitmap?) {
         if (canvasBitmap != null) {
-            val filePath = saveToInternalStorage(canvasBitmap)
-            addStringPreference(this, AppConstant.PREFERENCE_FILE_PATH, filePath)
+            val sdf = SimpleDateFormat("dd/M/yyyy hh:mm:ss")
+            val currentDate = sdf.format(Date())
+            saveImage(canvasBitmap, "DrawingBoard-$currentDate")
+//            val filePath = saveImage(canvasBitmap, "DrawingBoard-$currentDate")
+//            addStringPreference(this, AppConstant.PREFERENCE_FILE_PATH, filePath.toString())
             showMessage(this@MainActivity, getString(R.string.drawing_save))
+            if (mRewardedAd != null) {
+                mRewardedAd?.show(this) {}
+            } else {
+                Log.d(TAG, "The rewarded ad wasn't ready yet.")
+            }
         }
     }
 
@@ -310,7 +410,7 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
                     R.drawable.ic_circle_filled
                 )
             )
-            AppConstant.DRAWING_TYPE_OVAL-> viewBinding.ivDrawing.setImageDrawable(
+            AppConstant.DRAWING_TYPE_OVAL -> viewBinding.ivDrawing.setImageDrawable(
                 ContextCompat.getDrawable(
                     this@MainActivity,
                     R.drawable.ic_circle
@@ -343,13 +443,22 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
     private fun updateDrawingType(drawing: Int) {
         drawingPad!!.setDrawing(drawing)
         setSelectedDrawing(drawing)
-        addIntegerPreference(this@MainActivity, AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE, drawing)
+        addIntegerPreference(
+            this@MainActivity,
+            AppConstant.PREFERENCE_SELECTED_DRAWING_TYPE,
+            drawing
+        )
     }
 
     private fun enableEraser() {
         drawingPad!!.setEraserMode(Color.WHITE, AppConstant.STROKE_WIDTH_5)
         isEraserModeActive = true
-        viewBinding.ivEraser.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.ic_eraser_selected))
+        viewBinding.ivEraser.setImageDrawable(
+            ContextCompat.getDrawable(
+                this,
+                R.drawable.ic_eraser_selected
+            )
+        )
     }
 
     private fun disableEraser() {
@@ -358,12 +467,38 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
         viewBinding.ivEraser.setImageDrawable(ContextCompat.getDrawable(this, R.drawable.ic_eraser))
     }
 
+    @Throws(IOException::class)
+    private fun saveImage(bitmap: Bitmap, @NonNull name: String) {
+        val fos: OutputStream? = if (SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = contentResolver
+            val contentValues = ContentValues()
+            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "$name.jpg")
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpg")
+            contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+            val imageUri =
+                resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            resolver.openOutputStream(Objects.requireNonNull(imageUri)!!)
+        } else {
+            val imagesDir =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+                    .toString()
+            val image = File(imagesDir, "$name.jpg")
+            FileOutputStream(image)
+        }
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
+        Objects.requireNonNull(fos)!!.close()
+    }
+
+    @SuppressLint("SimpleDateFormat")
     private fun saveToInternalStorage(bitmapImage: Bitmap): String {
+        val sdf = SimpleDateFormat("dd/M/yyyy hh:mm:ss")
+        val currentDate = sdf.format(Date())
+
         val cw = ContextWrapper(applicationContext)
         // path to /data/data/yourapp/app_data/imageDir
-        val directory = cw.getDir("imageDir", MODE_PRIVATE)
+        val directory = cw.getDir("DrawingBoard", MODE_PRIVATE)
         // Create imageDir
-        val mypath = File(directory, "drawing.png")
+        val mypath = File(directory, "DrawingBoard-$currentDate.png")
         var fos: FileOutputStream? = null
         try {
             fos = FileOutputStream(mypath)
@@ -402,32 +537,23 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
             }
         }
 
-        if (SDK_INT >= Build.VERSION_CODES.R && !Environment.isExternalStorageManager()) {
-            val result1: Int
-            result1 = ContextCompat.checkSelfPermission(this, Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-            if (result1 != PackageManager.PERMISSION_GRANTED) {
-                try {
-                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    intent.addCategory("android.intent.category.DEFAULT")
-                    intent.data = Uri.parse(String.format("package:%s", applicationContext.packageName))
-                    startActivityForResult(intent, 2296)
-                } catch (e: java.lang.Exception) {
-                    val intent = Intent()
-                    intent.action = Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION
-                    startActivityForResult(intent, 2296)
-                }
-            }
-        }
-
         if (listPermissionsNeeded.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, listPermissionsNeeded.toTypedArray(), MULTIPLE_PERMISSIONS)
+            ActivityCompat.requestPermissions(
+                this,
+                listPermissionsNeeded.toTypedArray(),
+                MULTIPLE_PERMISSIONS
+            )
             return false
         }
 
         return true
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         when (requestCode) {
             MULTIPLE_PERMISSIONS -> {
@@ -437,18 +563,4 @@ class MainActivity : AppCompatActivity(), View.OnClickListener, OnSelectEraser, 
             }
         }
     }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 2296) {
-            if (SDK_INT >= Build.VERSION_CODES.R) {
-                if (Environment.isExternalStorageManager()) {
-                    // perform action when allow permission success
-                } else {
-                    Toast.makeText(this, "Allow permission for storage access!", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
 }
